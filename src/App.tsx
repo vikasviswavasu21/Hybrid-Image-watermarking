@@ -8,6 +8,8 @@ interface Metrics {
   psnr: string;
   ssim: string;
   alpha: string;
+  dwtLevel?: number;
+  blockSize?: number;
 }
 
 export default function App() {
@@ -29,7 +31,7 @@ export default function App() {
   const [attackedImage, setAttackedImage] = useState<string | null>(null);
   const [robustnessScore, setRobustnessScore] = useState<string | null>(null);
   const [attackResults, setAttackResults] = useState<{ name: string, score: number }[]>([]);
-  const [manualAlpha, setManualAlpha] = useState<number>(40);
+  const [manualAlpha, setManualAlpha] = useState<number>(60);
   const [watermarkOpacity, setWatermarkOpacity] = useState<number>(100);
   const [dwtLevel, setDwtLevel] = useState<number>(1);
   const [blockSize, setBlockSize] = useState<number>(4);
@@ -71,8 +73,8 @@ export default function App() {
 
   // Pre-processing State
   const [embedQuality, setEmbedQuality] = useState(90);
-  const [embedResolution, setEmbedResolution] = useState('original');
-  const [extractQuality, setExtractQuality] = useState(90);
+  const [embedResolution, setEmbedResolution] = useState('720p');
+  const [extractQuality, setExtractQuality] = useState(100);
   const [extractResolution, setExtractResolution] = useState('original');
   const [rawCover, setRawCover] = useState<File | null>(null);
   const [rawWatermark, setRawWatermark] = useState<File | null>(null);
@@ -80,6 +82,9 @@ export default function App() {
   const [isProcessing, setIsProcessing] = useState(false);
 
   const processImage = async (file: File, quality: number, resolution: string): Promise<{ file: File, preview: string }> => {
+    if (resolution === 'original' && quality === 100) {
+      return { file, preview: URL.createObjectURL(file) };
+    }
     return new Promise((resolve) => {
       const img = new Image();
       img.onload = () => {
@@ -97,6 +102,14 @@ export default function App() {
           height *= scale;
         } else if (resolution === '1080p') {
           const scale = Math.min(1920 / width, 1080 / height, 1);
+          width *= scale;
+          height *= scale;
+        } else if (resolution === '2K') {
+          const scale = Math.min(2560 / width, 1440 / height, 1);
+          width *= scale;
+          height *= scale;
+        } else if (resolution === '4K') {
+          const scale = Math.min(3840 / width, 2160 / height, 1);
           width *= scale;
           height *= scale;
         }
@@ -146,14 +159,11 @@ export default function App() {
   const onDropWatermark = useCallback(async (acceptedFiles: File[]) => {
     const file = acceptedFiles[0];
     setRawWatermark(file);
-    setIsProcessing(true);
-    const processed = await processImage(file, embedQuality, embedResolution);
-    setWatermarkImage(processed.file);
-    setWatermarkPreview(processed.preview);
-    setIsProcessing(false);
+    setWatermarkImage(file);
+    setWatermarkPreview(URL.createObjectURL(file));
     setResultImage(null);
     setMetrics(null);
-  }, [embedQuality, embedResolution]);
+  }, []);
 
   const onDropWatermarked = useCallback(async (acceptedFiles: File[]) => {
     const file = acceptedFiles[0];
@@ -183,13 +193,6 @@ export default function App() {
         const processed = await processImage(rawCover, embedQuality, embedResolution);
         setCoverImage(processed.file);
         setCoverPreview(processed.preview);
-        setIsProcessing(false);
-      }
-      if (rawWatermark) {
-        setIsProcessing(true);
-        const processed = await processImage(rawWatermark, embedQuality, embedResolution);
-        setWatermarkImage(processed.file);
-        setWatermarkPreview(processed.preview);
         setIsProcessing(false);
       }
     };
@@ -233,80 +236,116 @@ export default function App() {
     multiple: false
   } as any);
 
+  const [isStressTesting, setIsStressTesting] = useState(false);
+
+  const runAllAttacks = async () => {
+    if (!resultImage || !watermarkImage || !metrics) return;
+    
+    setIsStressTesting(true);
+    setError(null);
+    
+    try {
+      const resBlob = await fetch(resultImage).then(r => r.blob());
+      const wmBlob = await fetch(watermarkPreview!).then(r => r.blob());
+      
+      const formData = new FormData();
+      formData.append('image', resBlob, 'watermarked.png');
+      formData.append('watermark', wmBlob, 'watermark.png');
+      formData.append('alpha', metrics.alpha.toString());
+      formData.append('dwtLevel', (metrics.dwtLevel || dwtLevel).toString());
+      formData.append('blockSize', (metrics.blockSize || blockSize).toString());
+      
+      const attackList = [
+        { id: 'compression', intensity: 0.4 },
+        { id: 'noise', intensity: 0.1 },
+        { id: 'blur', intensity: 0.3 },
+        { id: 'median', intensity: 0.2 },
+        { id: 'rotation', intensity: 0.1 },
+        { id: 'cropping', intensity: 0.1 },
+        { id: 'sharpen', intensity: 0.4 },
+        { id: 'brightness', intensity: 0.2 },
+        { id: 'contrast', intensity: 0.2 },
+        { id: 'scaling', intensity: 0.3 }
+      ];
+      
+      formData.append('attacks', JSON.stringify(attackList));
+      
+      const response = await fetch('/api/stress-test', {
+        method: 'POST',
+        body: formData
+      });
+      
+      if (!response.ok) {
+        const contentType = response.headers.get("content-type");
+        if (contentType && contentType.includes("application/json")) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || 'Stress test failed');
+        } else {
+          const text = await response.text();
+          console.error("Non-JSON error response:", text);
+          throw new Error(`Server error (${response.status}). Please check server logs.`);
+        }
+      }
+      
+      const data = await response.json();
+      setAttackResults(data.results);
+      
+      // Calculate average score
+      const avg = data.results.reduce((acc: number, curr: any) => acc + curr.score, 0) / data.results.length;
+      setRobustnessScore(avg.toFixed(4));
+      
+    } catch (err: any) {
+      setError(err.message || 'Stress test failed');
+      console.error(err);
+    } finally {
+      setIsStressTesting(false);
+    }
+  };
+
   const handleAttack = async (type: 'compression' | 'noise' | 'rotation' | 'cropping' | 'blur' | 'median' | 'sharpen' | 'brightness' | 'contrast' | 'scaling', intensity: number) => {
-    if (!resultImage || !coverImage || !watermarkImage) return;
+    if (!resultImage || !watermarkImage || !metrics) return;
 
     setAttacking(type);
     setRobustnessScore(null);
     
     try {
-      // 1. Perform Attack
       const resBlob = await fetch(resultImage).then(r => r.blob());
-      const attackFormData = new FormData();
-      attackFormData.append('image', resBlob, 'watermarked.png');
-      attackFormData.append('type', type);
-      attackFormData.append('intensity', intensity.toString());
+      const wmBlob = await fetch(watermarkPreview!).then(r => r.blob());
+      
+      const formData = new FormData();
+      formData.append('image', resBlob, 'watermarked.png');
+      formData.append('watermark', wmBlob, 'watermark.png');
+      formData.append('alpha', metrics.alpha.toString());
+      formData.append('dwtLevel', (metrics.dwtLevel || dwtLevel).toString());
+      formData.append('blockSize', (metrics.blockSize || blockSize).toString());
+      formData.append('attacks', JSON.stringify([{ id: type, intensity }]));
 
-      const attackRes = await fetch('/api/attack', {
+      const response = await fetch('/api/stress-test', {
         method: 'POST',
-        body: attackFormData
+        body: formData
       });
       
-      if (!attackRes.ok) {
-        const errorData = await attackRes.json().catch(() => ({ error: 'Attack simulation failed' }));
-        throw new Error(errorData.error || 'Attack simulation failed');
+      if (!response.ok) {
+        const contentType = response.headers.get("content-type");
+        if (contentType && contentType.includes("application/json")) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || 'Attack simulation failed');
+        } else {
+          const text = await response.text();
+          console.error("Non-JSON error response:", text);
+          throw new Error(`Server error (${response.status}). Please check server logs.`);
+        }
       }
       
-      const attackData = await attackRes.json();
-      setAttackedImage(attackData.image);
-
-      // 2. Extract from Attacked Image
-      const extractFormData = new FormData();
-      const attackedBlob = await fetch(attackData.image).then(r => r.blob());
-      extractFormData.append('watermarked', attackedBlob, 'attacked.png');
-      extractFormData.append('alpha', metrics?.alpha || '40');
-      extractFormData.append('dwtLevel', dwtLevel.toString());
-      extractFormData.append('blockSize', blockSize.toString());
-
-      const extractRes = await fetch('/api/extract', {
-        method: 'POST',
-        body: extractFormData
-      });
+      const data = await response.json();
+      const result = data.results[0];
       
-      if (!extractRes.ok) {
-        const errorData = await extractRes.json().catch(() => ({ error: 'Extraction failed' }));
-        throw new Error(errorData.error || 'Extraction failed');
-      }
-      
-      const extractData = await extractRes.json();
-
-      // 3. Calculate Robustness (NC)
-      const robustnessFormData = new FormData();
-      const originalWatermarkBlob = await fetch(watermarkPreview!).then(r => r.blob());
-      const extractedWatermarkBlob = await fetch(extractData.image).then(r => r.blob());
-      
-      robustnessFormData.append('originalWatermark', originalWatermarkBlob, 'original_w.png');
-      robustnessFormData.append('extractedWatermark', extractedWatermarkBlob, 'extracted_w.png');
-
-      const robustnessRes = await fetch('/api/robustness', {
-        method: 'POST',
-        body: robustnessFormData
-      });
-      
-      if (!robustnessRes.ok) {
-        const errorData = await robustnessRes.json().catch(() => ({ error: 'Robustness calculation failed' }));
-        throw new Error(errorData.error || 'Robustness calculation failed');
-      }
-      
-      const robustnessData = await robustnessRes.json();
-      
-      const score = parseFloat(robustnessData.score);
-      setRobustnessScore(robustnessData.score);
+      setRobustnessScore(result.score.toFixed(4));
       
       // Update attack results for the graph
       setAttackResults(prev => {
         const existing = prev.findIndex(r => r.name === type);
-        const newResult = { name: type, score: score };
+        const newResult = { name: type, score: result.score };
         if (existing !== -1) {
           const updated = [...prev];
           updated[existing] = newResult;
@@ -675,53 +714,64 @@ This report confirms the integrity and security of the watermarked asset.
                 </div>
 
                 {/* Pre-processing Settings */}
-                <div className="bg-slate-950/50 border border-slate-800 rounded-2xl p-5 mb-8 space-y-6">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Settings2 className="w-4 h-4 text-indigo-400" />
-                      <h3 className="text-[10px] font-black text-white uppercase tracking-[0.2em]">Pre-processing Controls</h3>
-                    </div>
-                    {isProcessing && (
-                      <div className="flex items-center gap-2 text-[9px] font-bold text-indigo-400 uppercase animate-pulse">
-                        <RefreshCw className="w-3 h-3 animate-spin" />
-                        Processing...
+                {activeTab === 'embed' && (
+                  <div className="bg-slate-950/50 border border-slate-800 rounded-2xl p-5 mb-8 space-y-6">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Settings2 className="w-4 h-4 text-indigo-400" />
+                        <h3 className="text-[10px] font-black text-white uppercase tracking-[0.2em]">Pre-processing Controls</h3>
                       </div>
-                    )}
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="space-y-3">
-                      <div className="flex justify-between">
-                        <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">JPEG Quality</label>
-                        <span className="text-[10px] font-bold text-indigo-400">
-                          {activeTab === 'embed' ? embedQuality : extractQuality}%
-                        </span>
-                      </div>
-                      <input 
-                        type="range" 
-                        min="1" 
-                        max="100" 
-                        value={activeTab === 'embed' ? embedQuality : extractQuality}
-                        onChange={(e) => activeTab === 'embed' ? setEmbedQuality(parseInt(e.target.value)) : setExtractQuality(parseInt(e.target.value))}
-                        className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-                      />
+                      {isProcessing && (
+                        <div className="flex items-center gap-2 text-[9px] font-bold text-indigo-400 uppercase animate-pulse">
+                          <RefreshCw className="w-3 h-3 animate-spin" />
+                          Processing...
+                        </div>
+                      )}
                     </div>
 
-                    <div className="space-y-3">
-                      <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Target Resolution</label>
-                      <select 
-                        value={activeTab === 'embed' ? embedResolution : extractResolution}
-                        onChange={(e) => activeTab === 'embed' ? setEmbedResolution(e.target.value) : setExtractResolution(e.target.value)}
-                        className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs font-bold text-slate-300 outline-none focus:border-indigo-500/50 transition-all"
-                      >
-                        <option value="original">Original Size</option>
-                        <option value="1080p">1080p (FHD)</option>
-                        <option value="720p">720p (HD)</option>
-                        <option value="480p">480p (SD)</option>
-                      </select>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div className="space-y-3">
+                        <div className="flex justify-between">
+                          <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">JPEG Quality</label>
+                          <span className="text-[10px] font-bold text-indigo-400">
+                            {embedQuality}%
+                          </span>
+                        </div>
+                        <input 
+                          type="range" 
+                          min="1" 
+                          max="100" 
+                          value={embedQuality}
+                          onChange={(e) => setEmbedQuality(parseInt(e.target.value))}
+                          className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                        />
+                      </div>
+
+                      <div className="space-y-3">
+                        <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Target Resolution</label>
+                        <select 
+                          value={embedResolution}
+                          onChange={(e) => setEmbedResolution(e.target.value)}
+                          className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs font-bold text-slate-300 outline-none focus:border-indigo-500/50 transition-all"
+                        >
+                          <option value="original">Original Size</option>
+                          <option value="4K">4K (UHD)</option>
+                          <option value="2K">2K (QHD)</option>
+                          <option value="1080p">1080p (FHD)</option>
+                          <option value="720p">720p (HD)</option>
+                          <option value="480p">480p (SD)</option>
+                        </select>
+                      </div>
                     </div>
                   </div>
-                </div>
+                )}
+                
+                {activeTab === 'extract' && isProcessing && (
+                  <div className="flex items-center gap-2 text-[9px] font-bold text-indigo-400 uppercase animate-pulse mb-8">
+                    <RefreshCw className="w-3 h-3 animate-spin" />
+                    Processing Image...
+                  </div>
+                )}
                 
                 {activeTab === 'embed' ? (
                   <div className="space-y-6">
@@ -1363,11 +1413,30 @@ This report confirms the integrity and security of the watermarked asset.
                       className="bg-slate-900/80 backdrop-blur-xl rounded-3xl border border-slate-800 overflow-hidden"
                     >
                       <div className="p-6 border-b border-slate-800 flex items-center justify-between bg-slate-900/50">
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-full bg-red-500/10 flex items-center justify-center">
-                            <ShieldAlert className="w-5 h-5 text-red-400" />
+                        <div className="flex items-center justify-between w-full">
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-full bg-red-500/10 flex items-center justify-center">
+                              <ShieldAlert className="w-5 h-5 text-red-400" />
+                            </div>
+                            <h2 className="font-bold text-white">Robustness Stress Test</h2>
                           </div>
-                          <h2 className="font-bold text-white">Robustness Stress Test</h2>
+                          <button
+                            onClick={runAllAttacks}
+                            disabled={isStressTesting || attacking !== null}
+                            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-black uppercase tracking-widest rounded-xl transition-all shadow-lg shadow-indigo-500/20"
+                          >
+                            {isStressTesting ? (
+                              <>
+                                <RefreshCw className="w-3 h-3 animate-spin" />
+                                Testing...
+                              </>
+                            ) : (
+                              <>
+                                <Zap className="w-3 h-3" />
+                                Run All Attacks
+                              </>
+                            )}
+                          </button>
                         </div>
                       </div>
                       <div className="p-8 space-y-8">
@@ -1386,7 +1455,7 @@ This report confirms the integrity and security of the watermarked asset.
                             { id: 'cropping', label: 'Center Cropping', icon: Scissors, intensity: 0.2 },
                             { id: 'sharpen', label: 'Sharpening', icon: Zap, intensity: 0.5 },
                             { id: 'brightness', label: 'Brightness', icon: Sun, intensity: 0.2 },
-                            { id: 'contrast', label: 'Contrast', icon: Contrast, intensity: 1.2 },
+                            { id: 'contrast', label: 'Contrast', icon: Contrast, intensity: 0.3 },
                             { id: 'scaling', label: 'Scaling', icon: Maximize, intensity: 0.5 },
                           ].map((attack) => (
                             <button
@@ -1430,13 +1499,15 @@ This report confirms the integrity and security of the watermarked asset.
                                   </div>
                                 ) : (
                                   <>
-                                    <div className={`text-6xl font-black ${parseFloat(robustnessScore || '0') > 0.9 ? 'text-green-400' : parseFloat(robustnessScore || '0') > 0.7 ? 'text-yellow-500' : 'text-red-500'}`}>
+                                    <div className={`text-6xl font-black ${parseFloat(robustnessScore || '0') > 0.9 ? 'text-green-400' : parseFloat(robustnessScore || '0') > 0.8 ? 'text-emerald-400' : parseFloat(robustnessScore || '0') > 0.6 ? 'text-yellow-500' : 'text-red-500'}`}>
                                       {robustnessScore}
                                     </div>
                                     <div className="px-3 py-1 rounded-full bg-slate-900 border border-slate-800 text-[10px] font-black uppercase tracking-widest">
                                       {parseFloat(robustnessScore || '0') > 0.9 ? (
-                                        <span className="text-green-400">Excellent</span>
-                                      ) : parseFloat(robustnessScore || '0') > 0.7 ? (
+                                        <span className="text-green-400">Best</span>
+                                      ) : parseFloat(robustnessScore || '0') > 0.8 ? (
+                                        <span className="text-emerald-400">Excellent</span>
+                                      ) : parseFloat(robustnessScore || '0') > 0.6 ? (
                                         <span className="text-yellow-500">Good</span>
                                       ) : (
                                         <span className="text-red-500">Poor</span>
@@ -1444,10 +1515,12 @@ This report confirms the integrity and security of the watermarked asset.
                                     </div>
                                     <p className="text-xs text-slate-500 max-w-[200px]">
                                       {parseFloat(robustnessScore || '0') > 0.9 
-                                        ? "Excellent robustness! The watermark is highly resilient." 
-                                        : parseFloat(robustnessScore || '0') > 0.7 
-                                        ? "Good robustness. The watermark remains identifiable."
-                                        : "Moderate robustness. The attack significantly impacted the watermark."}
+                                        ? "Best robustness! The watermark is highly resilient to most common attacks." 
+                                        : parseFloat(robustnessScore || '0') > 0.8
+                                        ? "Excellent robustness! The watermark survives well under moderate stress."
+                                        : parseFloat(robustnessScore || '0') > 0.6 
+                                        ? "Good robustness. The watermark remains identifiable after standard processing."
+                                        : "Poor robustness. The attack significantly impacted the watermark's integrity."}
                                     </p>
                                   </>
                                 )}
@@ -1479,7 +1552,7 @@ This report confirms the integrity and security of the watermarked asset.
                             
                             <div className="h-[300px] w-full bg-slate-950/30 rounded-2xl p-4 border border-slate-800/50">
                               <ResponsiveContainer width="100%" height="100%">
-                                <BarChart data={attackResults} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
+                                <BarChart data={[...attackResults].sort((a, b) => b.score - a.score)} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
                                   <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
                                   <XAxis 
                                     dataKey="name" 
@@ -1515,7 +1588,7 @@ This report confirms the integrity and security of the watermarked asset.
                                     {attackResults.map((entry, index) => (
                                       <Cell 
                                         key={`cell-${index}`} 
-                                        fill={entry.score > 0.8 ? '#22c55e' : entry.score > 0.6 ? '#eab308' : '#ef4444'} 
+                                        fill={entry.score > 0.95 ? '#22c55e' : entry.score > 0.85 ? '#10b981' : entry.score > 0.7 ? '#eab308' : '#ef4444'} 
                                         fillOpacity={0.8}
                                       />
                                     ))}
@@ -1534,7 +1607,10 @@ This report confirms the integrity and security of the watermarked asset.
                               <div className="bg-blue-500/5 border border-blue-500/10 p-4 rounded-xl">
                                 <h5 className="text-[10px] font-black text-blue-400 uppercase tracking-widest mb-2">Optimization Insight</h5>
                                 <p className="text-[11px] text-slate-500 leading-relaxed">
-                                  The Genetic Algorithm has tuned the scaling factor (α) to maintain an average robustness score of {(attackResults.reduce((acc, curr) => acc + curr.score, 0) / attackResults.length).toFixed(4)} across all tested attack vectors.
+                                  {metrics?.alpha === manualAlpha.toFixed(2) 
+                                    ? `The manual scaling factor (α = ${metrics?.alpha}) maintains an average robustness score of ${(attackResults.reduce((acc, curr) => acc + curr.score, 0) / attackResults.length).toFixed(4)} across all tested attack vectors.`
+                                    : `The Genetic Algorithm has tuned the scaling factor (α = ${metrics?.alpha}) to maintain an average robustness score of ${(attackResults.reduce((acc, curr) => acc + curr.score, 0) / attackResults.length).toFixed(4)} across all tested attack vectors.`
+                                  }
                                 </p>
                               </div>
                             </div>
