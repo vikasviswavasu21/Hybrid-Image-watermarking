@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { Upload, Image as ImageIcon, Download, RefreshCw, CheckCircle2, AlertCircle, Info, BarChart3, Settings2, ShieldAlert, Zap, Scissors, RotateCw, Wind, Sun, Contrast, Maximize } from 'lucide-react';
+import { Upload, Image as ImageIcon, Download, RefreshCw, CheckCircle2, AlertCircle, Info, BarChart3, Settings2, ShieldAlert, Zap, Scissors, RotateCw, Wind, Sun, Contrast, Maximize, Activity, Layers } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 
@@ -258,6 +258,8 @@ export default function App() {
       const attackList = [
         { id: 'compression', intensity: 0.4 },
         { id: 'noise', intensity: 0.1 },
+        { id: 'gaussian', intensity: 0.15 },
+        { id: 'gamma', intensity: 0.2 },
         { id: 'blur', intensity: 0.3 },
         { id: 'median', intensity: 0.2 },
         { id: 'rotation', intensity: 0.1 },
@@ -302,7 +304,7 @@ export default function App() {
     }
   };
 
-  const handleAttack = async (type: 'compression' | 'noise' | 'rotation' | 'cropping' | 'blur' | 'median' | 'sharpen' | 'brightness' | 'contrast' | 'scaling', intensity: number) => {
+  const handleAttack = async (type: 'compression' | 'noise' | 'gaussian' | 'gamma' | 'rotation' | 'cropping' | 'blur' | 'median' | 'sharpen' | 'brightness' | 'contrast' | 'scaling', intensity: number) => {
     if (!resultImage || !watermarkImage || !metrics) return;
 
     setAttacking(type);
@@ -1448,7 +1450,9 @@ This report confirms the integrity and security of the watermarked asset.
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                           {[
                             { id: 'compression', label: 'JPEG Compression', icon: Download, intensity: 0.6 },
-                            { id: 'noise', label: 'Gaussian Noise', icon: Zap, intensity: 0.1 },
+                            { id: 'noise', label: 'Salt & Pepper', icon: Zap, intensity: 0.1 },
+                            { id: 'gaussian', label: 'Gaussian Noise', icon: Activity, intensity: 0.15 },
+                            { id: 'gamma', label: 'Gamma Correction', icon: Layers, intensity: 0.2 },
                             { id: 'blur', label: 'Gaussian Blur', icon: Wind, intensity: 0.4 },
                             { id: 'median', label: 'Median Filter', icon: ShieldAlert, intensity: 0.3 },
                             { id: 'rotation', label: 'Small Rotation', icon: RotateCw, intensity: 0.3 },

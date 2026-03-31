@@ -1022,6 +1022,25 @@ app.post("/api/stress-test", upload.fields([{ name: 'image' }, { name: 'watermar
                         }
                     }
                     break;
+                case 'gaussian':
+                    // Gaussian noise
+                    const sigma = intensity * 25;
+                    for (let y = 0; y < img.height; y++) {
+                        for (let x = 0; x < img.width; x++) {
+                            const c = intToRGBA(img.getPixelColor(x, y));
+                            const noise = (Math.random() + Math.random() + Math.random() + Math.random() + Math.random() + Math.random() - 3) * sigma;
+                            const r = Math.max(0, Math.min(255, c.r + noise));
+                            const g = Math.max(0, Math.min(255, c.g + noise));
+                            const b = Math.max(0, Math.min(255, c.b + noise));
+                            img.setPixelColor(rgbaToInt(r, g, b, 255), x, y);
+                        }
+                    }
+                    break;
+                case 'gamma':
+                    // Gamma correction
+                    const gamma = 1 + (intensity * 2); // Range 1.0 to 3.0
+                    await img.gamma(gamma);
+                    break;
                 case 'blur':
                     // Max radius 3 (more standard)
                     await img.blur(Math.max(1, Math.floor(intensity * 3)));
