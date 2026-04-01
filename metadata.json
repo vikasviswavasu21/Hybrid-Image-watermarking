@@ -1,5 +1,5 @@
 {
   "name": "Hybrid Image Protection",
-  "description": "A digital image watermarking application using Hybrid DWT-SVD techniques optimized with Genetic Algorithms for maximum robustness and imperceptibility.",
+  "description": "A high-performance digital image watermarking application using Hybrid DWT-SVD techniques optimized with Genetic Algorithms. Supports 4K/2K resolutions and features advanced robustness stress testing.",
   "requestFramePermissions": []
 }

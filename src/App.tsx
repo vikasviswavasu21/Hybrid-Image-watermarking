@@ -1,3 +1,4 @@
+// Hybrid Image Protection Frontend - v1.0.1
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { Upload, Image as ImageIcon, Download, RefreshCw, CheckCircle2, AlertCircle, Info, BarChart3, Settings2, ShieldAlert, Zap, Scissors, RotateCw, Wind, Sun, Contrast, Maximize } from 'lucide-react';
